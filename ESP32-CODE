@@ -1,0 +1,102 @@
+#include <WiFi.h>
+#include <HTTPClient.h>
+#include "HX711.h" // For the actual HX711, we'll simulate its reading here
+
+// --- WiFi Credentials ---
+const char* ssid = "Wokwi-GUEST"; // Wokwi's simulated Wi-Fi network
+const char* password = "";       // No password for Wokwi-WiFi
+
+// --- Sensor Pins ---
+const int LOADCELL_DOUT_PIN = 27; // HX711 DT pin
+const int LOADCELL_SCK_PIN = 26;  // HX711 SCK pin
+const int MQ6_ANALOG_PIN = 34;    // MQ-6 Analog Output
+const int BUZZER_PIN = 2;         // Buzzer pin
+const int POT_PIN = 32;           // Potentiometer pin (simulating load cell)
+
+// --- HX711 Simulation ---
+// HX711 scale; // Uncomment for actual HX711 library use
+
+// --- Thresholds ---
+const int GAS_LEAK_THRESHOLD = 2500; // Analog reading for gas leak (adjust based on MQ-6 behavior in Wokwi)
+const int LOW_GAS_THRESHOLD = 500;   // Analog reading for low gas (from potentiometer)
+
+// --- SMS Alert Configuration (Simulated) ---
+// In a real project, you'd use Twilio API here. For Wokwi, we'll use a simple HTTP GET request
+// to a mock API or a webhook service like RequestBin/webhook.site to demonstrate the concept.
+// Replace with your actual webhook URL or a service like IFTTT if you want real SMS.
+const char* smsApiUrl = "http://mock-sms-api.com/send?to=+254788653557&message="; // Replace XXXXXXXX with your phone number
+
+void setup() {
+  Serial.begin(115200);
+  pinMode(BUZZER_PIN, OUTPUT);
+  // scale.begin(LOADCELL_DOUT_PIN, LOADCELL_SCK_PIN); // Uncomment for actual HX711
+
+  // Connect to Wi-Fi
+  WiFi.begin(ssid, password);
+  Serial.print("Connecting to WiFi...");
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(1000);
+    Serial.print(".");
+  }
+  Serial.println("\nWiFi connected!");
+  Serial.print("IP Address: ");
+  Serial.println(WiFi.localIP());
+}
+
+void loop() {
+  // --- Simulate Load Cell Reading (Gas Consumption) ---
+  // In a real scenario, you'd read from HX711 like: float currentWeight = scale.get_units(5);
+  int gasLevelRaw = analogRead(POT_PIN);
+  Serial.print("Simulated Gas Level (Potentiometer): ");
+  Serial.println(gasLevelRaw);
+
+  // Check for low gas level
+  if (gasLevelRaw < LOW_GAS_THRESHOLD) {
+    Serial.println("ALERT: Low Gas Level!");
+    digitalWrite(BUZZER_PIN, HIGH); // Activate buzzer
+    sendSMSAlert("CRITICAL: Your LPG cylinder is running low! Please order a refill soon.");
+    delay(1000); // Keep buzzer on for a moment
+    digitalWrite(BUZZER_PIN, LOW);
+  }
+
+  // --- Read MQ-6 Gas Sensor ---
+  int gasSensorValue = analogRead(MQ6_ANALOG_PIN);
+  Serial.print("Gas Sensor (MQ-6) Reading: ");
+  Serial.println(gasSensorValue);
+
+  // Check for gas leak
+  if (gasSensorValue > GAS_LEAK_THRESHOLD) {
+    Serial.println("DANGER: Gas Leak Detected!");
+    digitalWrite(BUZZER_PIN, HIGH); // Activate buzzer
+    sendSMSAlert("DANGER: Possible LPG Leak Detected! Ensure ventilation and call emergency services.");
+    delay(5000); // Keep buzzer on for longer for critical alert
+    digitalWrite(BUZZER_PIN, LOW);
+  } else {
+    digitalWrite(BUZZER_PIN, LOW); // Turn off buzzer if no leak/low gas
+  }
+
+  delay(5000); // Read sensors every 5 seconds (adjust as needed)
+}
+
+void sendSMSAlert(String message) {
+  if (WiFi.status() == WL_CONNECTED) {
+    HTTPClient http;
+    String url = smsApiUrl + message;
+    Serial.print("Sending SMS alert: ");
+    Serial.println(url);
+
+    http.begin(url);
+    int httpCode = http.GET();
+
+    if (httpCode > 0) {
+      Serial.printf("SMS API Response Code: %d\n", httpCode);
+      String payload = http.getString();
+      Serial.println(payload);
+    } else {
+      Serial.printf("Error sending SMS: %s\n", http.errorToString(httpCode).c_str());
+    }
+    http.end();
+  } else {
+    Serial.println("WiFi not connected, cannot send SMS.");
+  }
+}
