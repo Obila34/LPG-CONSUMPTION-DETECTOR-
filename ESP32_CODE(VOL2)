@@ -1,0 +1,152 @@
+#include <WiFi.h>
+#include <HTTPClient.h>
+#include "base64.h" // You might need to install this library
+#include <WiFiClientSecure.h>
+#include "HX711.h"
+
+// --- WiFi Credentials ---
+const char* ssid = "Wokwi-GUEST";
+const char* password = "";
+
+// --- Twilio Credentials ---
+const char* accountSid = "ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"; // Your Account SID
+const char* authToken = "your_auth_token_here"; // Your Auth Token
+const char* twilioNumber = "+1234567890"; // Your Twilio number (in E.164 format)
+const char* recipientNumber = "+254788653557"; // The recipient's number
+
+// --- TwiML URL for Voice Call ---
+// Create this TwiML Bin in your Twilio Console and paste the URL here.
+const char* twimlUrl = "https://handler.twilio.com/twiml/EHxxxxxxxxxxxxxxxxxxxxxxxxxxxx";
+
+// --- Sensor Pins ---
+const int LOADCELL_DOUT_PIN = 27; // HX711 DT pin
+const int LOADCELL_SCK_PIN = 26;  // HX711 SCK pin
+const int MQ6_ANALOG_PIN = 34;    // MQ-6 Analog Output
+const int BUZZER_PIN = 2;         // Buzzer pin
+const int POT_PIN = 32;           // Potentiometer pin (simulating load cell)
+
+// --- HX711 Simulation ---
+// HX711 scale; // Uncomment for actual HX711 library use
+
+// --- Thresholds ---
+const int GAS_LEAK_THRESHOLD = 2500;
+const int LOW_GAS_THRESHOLD = 500;
+
+void setup() {
+  Serial.begin(115200);
+  pinMode(BUZZER_PIN, OUTPUT);
+  // scale.begin(LOADCELL_DOUT_PIN, LOADCELL_SCK_PIN);
+
+  // Connect to Wi-Fi
+  WiFi.begin(ssid, password);
+  Serial.print("Connecting to WiFi...");
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(1000);
+    Serial.print(".");
+  }
+  Serial.println("\nWiFi connected!");
+  Serial.print("IP Address: ");
+  Serial.println(WiFi.localIP());
+}
+
+void loop() {
+  // --- Simulate Load Cell Reading (Gas Consumption) ---
+  int gasLevelRaw = analogRead(POT_PIN);
+  Serial.print("Simulated Gas Level (Potentiometer): ");
+  Serial.println(gasLevelRaw);
+
+  // Check for low gas level (SMS alert)
+  if (gasLevelRaw < LOW_GAS_THRESHOLD) {
+    Serial.println("ALERT: Low Gas Level!");
+    digitalWrite(BUZZER_PIN, HIGH);
+    sendTwilioSMS("CRITICAL: Your LPG cylinder is running low! Please order a refill soon.");
+    delay(1000);
+    digitalWrite(BUZZER_PIN, LOW);
+  }
+
+  // --- Read MQ-6 Gas Sensor ---
+  int gasSensorValue = analogRead(MQ6_ANALOG_PIN);
+  Serial.print("Gas Sensor (MQ-6) Reading: ");
+  Serial.println(gasSensorValue);
+
+  // Check for gas leak (Voice Call)
+  if (gasSensorValue > GAS_LEAK_THRESHOLD) {
+    Serial.println("DANGER: Gas Leak Detected!");
+    digitalWrite(BUZZER_PIN, HIGH);
+    makeTwilioCall(recipientNumber, twilioNumber, twimlUrl);
+    delay(5000);
+    digitalWrite(BUZZER_PIN, LOW);
+  } else {
+    digitalWrite(BUZZER_PIN, LOW);
+  }
+
+  delay(5000);
+}
+
+// Function to send an SMS via Twilio API
+void sendTwilioSMS(String message) {
+  if (WiFi.status() == WL_CONNECTED) {
+    WiFiClientSecure client;
+    client.setInsecure(); // For Wokwi testing
+    
+    String url = "https://api.twilio.com/2010-04-01/Accounts/" + String(accountSid) + "/Messages.json";
+    
+    HTTPClient http;
+    http.begin(client, url);
+    http.addHeader("Content-Type", "application/x-www-form-urlencoded");
+    
+    String auth = String(accountSid) + ":" + authToken;
+    String encodedAuth = "Basic " + base64::encode(auth);
+    http.addHeader("Authorization", encodedAuth);
+
+    String postBody = "To=" + String(recipientNumber) + "&From=" + String(twilioNumber) + "&Body=" + message;
+    
+    Serial.print("Sending SMS to Twilio...");
+    int httpCode = http.POST(postBody);
+
+    if (httpCode > 0) {
+      Serial.printf("SMS API Response Code: %d\n", httpCode);
+      String payload = http.getString();
+      Serial.println(payload);
+    } else {
+      Serial.printf("Error sending SMS: %s\n", http.errorToString(httpCode).c_str());
+    }
+    http.end();
+  } else {
+    Serial.println("WiFi not connected, cannot send SMS.");
+  }
+}
+
+// Function to make a voice call via Twilio API
+void makeTwilioCall(const char* to, const char* from, const char* url) {
+  if (WiFi.status() == WL_CONNECTED) {
+    WiFiClientSecure client;
+    client.setInsecure(); // For Wokwi testing
+    
+    String api_url = "https://api.twilio.com/2010-04-01/Accounts/" + String(accountSid) + "/Calls.json";
+    
+    HTTPClient http;
+    http.begin(client, api_url);
+    http.addHeader("Content-Type", "application/x-www-form-urlencoded");
+    
+    String auth = String(accountSid) + ":" + authToken;
+    String encodedAuth = "Basic " + base64::encode(auth);
+    http.addHeader("Authorization", encodedAuth);
+
+    String postBody = "To=" + String(to) + "&From=" + String(from) + "&Url=" + String(url);
+    
+    Serial.print("Making voice call via Twilio...");
+    int httpCode = http.POST(postBody);
+
+    if (httpCode > 0) {
+      Serial.printf("Voice API Response Code: %d\n", httpCode);
+      String payload = http.getString();
+      Serial.println(payload);
+    } else {
+      Serial.printf("Error making call: %s\n", http.errorToString(httpCode).c_str());
+    }
+    http.end();
+  } else {
+    Serial.println("WiFi not connected, cannot make call.");
+  }
+}
